@@ -1,0 +1,93 @@
+#!/usr/bin/env python3
+"""Interactive terminal launcher for Antigravity CLI conversations."""
+
+from __future__ import annotations
+
+import argparse
+import os
+import shutil
+import sys
+from pathlib import Path
+
+from src.conversations import build_launch_command, load_conversations
+from src.tui import pick_and_choose_mode
+
+
+def resolve_agy_binary() -> str:
+    found = shutil.which("agy")
+    if found:
+        return found
+    fallback = Path.home() / ".local" / "bin" / "agy"
+    if fallback.exists():
+        return str(fallback)
+    return "agy"
+
+
+def parse_args(argv: list[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        prog="agy-launcher",
+        description="Browse Antigravity CLI conversations and launch one in default or --dangerously-skip-permissions mode.",
+    )
+    parser.add_argument(
+        "--db",
+        type=Path,
+        default=None,
+        help="Path to conversation_summaries.db (default: ~/.gemini/antigravity-cli/conversation_summaries.db)",
+    )
+    parser.add_argument(
+        "--include-subagents",
+        action="store_true",
+        help="Include subagent conversations in the list",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print the launch command instead of executing agy",
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv if argv is not None else sys.argv[1:])
+
+    try:
+        conversations = load_conversations(
+            db_path=args.db,
+            include_subagents=args.include_subagents,
+        )
+    except FileNotFoundError as exc:
+        if args.db is not None:
+            print(f"Error: {exc}", file=sys.stderr)
+            return 1
+        conversations = []
+
+    selection = pick_and_choose_mode(conversations)
+    if selection is None:
+        return 0
+
+    conv, dangerously_skip = selection
+    agy_bin = resolve_agy_binary()
+    cmd = build_launch_command(
+        conv.conversation_id,
+        dangerously_skip_permissions=dangerously_skip,
+        agy_bin=agy_bin,
+    )
+
+    if args.dry_run:
+        print(" ".join(cmd))
+        return 0
+
+    print(f"Launching: {' '.join(cmd)}")
+    try:
+        os.execvp(cmd[0], cmd)
+    except FileNotFoundError:
+        print(
+            f"Error: Could not find '{cmd[0]}' on PATH. Make sure the Antigravity CLI (agy) is installed.",
+            file=sys.stderr,
+        )
+        return 127
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
