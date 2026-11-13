@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import shlex
 import shutil
 import sys
 from pathlib import Path
@@ -65,17 +66,24 @@ def main(argv: list[str] | None = None) -> int:
     if selection is None:
         return 0
 
-    conv, dangerously_skip = selection
     agy_bin = resolve_agy_binary()
     cmd = build_launch_command(
-        conv.conversation_id,
-        dangerously_skip_permissions=dangerously_skip,
+        selection.conversation.conversation_id,
+        dangerously_skip_permissions=selection.dangerously_skip_permissions,
         agy_bin=agy_bin,
     )
 
     if args.dry_run:
-        print(" ".join(cmd))
+        if selection.working_dir is not None:
+            print(f"cd {shlex.quote(str(selection.working_dir))} && {' '.join(cmd)}")
+        else:
+            print(" ".join(cmd))
         return 0
+
+    if selection.working_dir is not None:
+        selection.working_dir.mkdir(parents=True, exist_ok=True)
+        os.chdir(selection.working_dir)
+        print(f"Directory: {selection.working_dir}")
 
     print(f"Launching: {' '.join(cmd)}")
     try:

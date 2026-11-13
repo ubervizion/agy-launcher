@@ -15,6 +15,7 @@ from urllib.parse import unquote, urlparse
 DEFAULT_DB_PATH = Path.home() / ".gemini" / "antigravity-cli" / "conversation_summaries.db"
 DEFAULT_STARRED_PATH = Path.home() / ".config" / "agy-launcher" / "starred.json"
 DEFAULT_TITLES_PATH = Path.home() / ".config" / "agy-launcher" / "titles.json"
+DEFAULT_PROJECTS_DIR = Path.home() / "Antigravity"
 NEW_CONVERSATION_ID = "__new__"
 
 
@@ -40,6 +41,36 @@ class Conversation:
         # Prefer the most specific workspace path (longest) for display.
         best = max(self.workspaces, key=len)
         return shorten_home(best)
+
+
+@dataclass(frozen=True)
+class LaunchSelection:
+    conversation: Conversation
+    dangerously_skip_permissions: bool
+    working_dir: Optional[Path] = None
+
+
+def get_projects_dir(projects_dir: Optional[Path] = None) -> Path:
+    if projects_dir is not None:
+        return Path(projects_dir)
+    env_dir = os.environ.get("AGY_PROJECTS_DIR")
+    if env_dir:
+        return Path(env_dir)
+    return DEFAULT_PROJECTS_DIR
+
+
+def resolve_project_dir(folder_name: str, projects_dir: Optional[Path] = None) -> Optional[Path]:
+    """Resolve a new project folder name inside ~/Antigravity.
+
+    Returns None when folder_name is blank (meaning use the current working directory).
+    Raises ValueError if the folder name is invalid or attempts path traversal.
+    """
+    cleaned = folder_name.strip()
+    if not cleaned:
+        return None
+    if "/" in cleaned or "\\" in cleaned or cleaned in (".", ".."):
+        raise ValueError("Folder name must be a single directory name without '/' or '..'.")
+    return get_projects_dir(projects_dir) / cleaned
 
 
 def make_new_conversation_item() -> Conversation:

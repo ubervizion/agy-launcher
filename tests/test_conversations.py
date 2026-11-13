@@ -20,6 +20,7 @@ from src.conversations import (
     load_starred_ids,
     make_new_conversation_item,
     parse_workspaces,
+    resolve_project_dir,
     set_custom_title,
     sort_conversations,
     toggle_starred,
@@ -219,6 +220,19 @@ class ConversationsTest(unittest.TestCase):
             titles = set_custom_title("conv-1", "   ", titles, path=titles_path)
             self.assertEqual(titles, {})
             self.assertEqual(apply_custom_titles(convs, titles)[0].title, "Portfolio Animations")
+
+    def test_resolve_project_dir(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "Antigravity"
+            self.assertIsNone(resolve_project_dir("", projects_dir=root))
+            self.assertIsNone(resolve_project_dir("   ", projects_dir=root))
+            self.assertEqual(
+                resolve_project_dir("  Messenger  ", projects_dir=root),
+                root / "Messenger",
+            )
+            for bad in ("..", ".", "a/b", "a\\b"):
+                with self.assertRaises(ValueError):
+                    resolve_project_dir(bad, projects_dir=root)
 
 
 if __name__ == "__main__":

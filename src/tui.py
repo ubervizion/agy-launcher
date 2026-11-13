@@ -5,17 +5,21 @@ from __future__ import annotations
 import curses
 import os
 import textwrap
+from pathlib import Path
 from typing import List, Optional, Set, Tuple
 
 from .conversations import (
     Conversation,
+    LaunchSelection,
     apply_custom_titles,
     build_launch_command,
     filter_conversations,
     format_relative_time,
+    get_projects_dir,
     load_custom_titles,
     load_starred_ids,
     make_new_conversation_item,
+    resolve_project_dir,
     set_custom_title,
     shorten_home,
     sort_conversations,
@@ -210,9 +214,89 @@ def _draw_list_view(
     return scroll_offset
 
 
+def _prompt_new_project_dir(
+    stdscr: "curses._CursesWindow",
+) -> Tuple[bool, Optional[Path]]:
+    """Prompt for an optional new project folder inside ~/Antigravity.
+
+    Returns:
+        (confirmed, target_dir) where confirmed=False means cancelled (Esc),
+        and target_dir=None means leave blank to use current directory.
+    """
+    buffer = ""
+    error_msg = ""
+    projects_root = get_projects_dir()
+    projects_display = shorten_home(str(projects_root))
+
+    while True:
+        stdscr.erase()
+        height, width = stdscr.getmaxyx()
+
+        _safe_addstr(stdscr, 0, 0, " New Conversation — Project Folder ", curses.color_pair(PAIR_HEADER) | curses.A_BOLD)
+        _safe_addstr(stdscr, 1, 0, "─" * max(0, width - 1), curses.color_pair(PAIR_BORDER) | curses.A_DIM)
+
+        _safe_addstr(
+            stdscr,
+            3,
+            2,
+            _truncate(f"Optional: create or select a folder inside {projects_display}", width - 4),
+            curses.A_NORMAL,
+        )
+        _safe_addstr(
+            stdscr,
+            4,
+            2,
+            _truncate("Leave blank and press Enter to launch in your current directory.", width - 4),
+            curses.A_DIM,
+        )
+
+        _safe_addstr(stdscr, 6, 2, "Project folder name:", curses.color_pair(PAIR_HEADER) | curses.A_BOLD)
+        max_input = max(10, width - 6)
+        display_buf = buffer[-(max_input - 1) :] if len(buffer) >= max_input else buffer
+        _safe_addstr(stdscr, 7, 2, f"> {display_buf}_", curses.color_pair(PAIR_ACCENT) | curses.A_BOLD)
+
+        if error_msg:
+            _safe_addstr(stdscr, 9, 2, _truncate(error_msg, width - 4), curses.color_pair(PAIR_DANGER) | curses.A_BOLD)
+        else:
+            try:
+                candidate = resolve_project_dir(buffer, projects_dir=projects_root)
+            except ValueError as exc:
+                _safe_addstr(stdscr, 9, 2, _truncate(str(exc), width - 4), curses.color_pair(PAIR_DANGER))
+            else:
+                if candidate is None:
+                    preview = f"Will launch in current directory: {shorten_home(os.getcwd())}"
+                elif candidate.exists():
+                    preview = f"Will use existing folder: {shorten_home(str(candidate))}"
+                else:
+                    preview = f"Will create and launch in: {shorten_home(str(candidate))}"
+                _safe_addstr(stdscr, 9, 2, _truncate(preview, width - 4), curses.A_DIM)
+
+        footer = " Enter: Continue  |  Ctrl-U: Clear  |  Esc: Back"
+        _safe_addstr(stdscr, height - 1, 0, _truncate(footer, width - 1), curses.A_REVERSE)
+        stdscr.refresh()
+
+        key = stdscr.getch()
+        error_msg = ""
+        if key == 27:  # Esc
+            return False, None
+        elif key in (curses.KEY_ENTER, 10, 13):
+            try:
+                target = resolve_project_dir(buffer, projects_dir=projects_root)
+                return True, target
+            except ValueError as exc:
+                error_msg = str(exc)
+        elif key == 21:  # Ctrl-U
+            buffer = ""
+        elif key in (curses.KEY_BACKSPACE, 127, 8):
+            buffer = buffer[:-1]
+        elif 32 <= key <= 126:
+            buffer += chr(key)
+
+
 def _select_launch_mode(
     stdscr: "curses._CursesWindow",
     conv: Conversation,
+    target_dir: Optional[Path] = None,
 ) -> Optional[bool]:
     """Prompt the user to choose default mode or --dangerously-skip-permissions.
 
@@ -230,7 +314,9 @@ def _select_launch_mode(
         _safe_addstr(stdscr, 3, 2, _truncate(conv.title, width - 4), curses.A_BOLD)
         if conv.is_new:
             _safe_addstr(stdscr, 4, 2, "Mode: Fresh Antigravity CLI session", curses.A_DIM)
-            _safe_addstr(stdscr, 5, 2, _truncate(f"Directory: {shorten_home(os.getcwd())}", width - 4), curses.A_DIM)
+            dir_display = shorten_home(str(target_dir)) if target_dir else shorten_home(os.getcwd())
+            suffix = " (will be created)" if (target_dir and not target_dir.exists()) else ""
+            _safe_addstr(stdscr, 5, 2, _truncate(f"Directory: {dir_display}{suffix}", width - 4), curses.A_DIM)
         else:
             _safe_addstr(stdscr, 4, 2, f"ID: {conv.conversation_id}", curses.A_DIM)
             ws_list = ", ".join(shorten_home(w) for w in conv.workspaces) if conv.workspaces else "Current directory"
@@ -349,7 +435,7 @@ def _prompt_rename(
 def _run_tui(
     stdscr: "curses._CursesWindow",
     conversations: List[Conversation],
-) -> Optional[Tuple[Conversation, bool]]:
+) -> Optional[LaunchSelection]:
     curses.curs_set(0)
     stdscr.keypad(True)
     _init_colors()
@@ -472,13 +558,22 @@ def _run_tui(
         elif key in (curses.KEY_ENTER, 10, 13):
             if filtered and 0 <= selected_idx < len(filtered):
                 chosen = filtered[selected_idx]
-                mode = _select_launch_mode(stdscr, chosen)
+                target_dir: Optional[Path] = None
+                if chosen.is_new:
+                    confirmed, target_dir = _prompt_new_project_dir(stdscr)
+                    if not confirmed:
+                        continue
+                mode = _select_launch_mode(stdscr, chosen, target_dir=target_dir)
                 if mode is not None:
-                    return chosen, mode
+                    return LaunchSelection(
+                        conversation=chosen,
+                        dangerously_skip_permissions=mode,
+                        working_dir=target_dir,
+                    )
 
 
 def pick_and_choose_mode(
     conversations: List[Conversation],
-) -> Optional[Tuple[Conversation, bool]]:
-    """Run the interactive TUI and return (conversation, dangerously_skip_permissions) or None."""
+) -> Optional[LaunchSelection]:
+    """Run the interactive TUI and return a LaunchSelection or None."""
     return curses.wrapper(_run_tui, conversations)

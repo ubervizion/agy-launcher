@@ -6,7 +6,7 @@ Browse your past conversations with titles, short descriptions, workspaces, and 
 
 ## Features
 
-- Permanent **+ Start New Conversation** option pinned at the top of the list.
+- Permanent **+ Start New Conversation** option pinned at the top of the list, with an optional prompt to create/select a project folder inside `~/Antigravity` (leave blank to launch in your current directory).
 - Reads directly from `~/.gemini/antigravity-cli/conversation_summaries.db` (read-only) with zero external dependencies.
 - Displays a short description for each conversation (extracted from the opening user prompt or preview), along with relative timestamp, step count, and workspace path.
 - Star conversations (`s`) to pin them to the top, and rename titles (`r`) with local persistence in `~/.config/agy-launcher/`.
